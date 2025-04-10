@@ -1,25 +1,27 @@
+import os
+import sys
+
 from pandas import DataFrame
 from sqlalchemy import create_engine, MetaData, text
 
-from clear_data_frames import ClearDataFrames
 
-
-class DbUploader:
-    DB_NAME = 'hackaton'
+class Uploader:
+    DB_NAME = 'hackathon'
     DB_USER = 'postgres'
     DB_PASSWORD = '1234'
     DB_HOST = 'localhost'
     DB_PORT = '5432'
 
     def __init__(self):
-        self.db_url = f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
-        self.engine = create_engine(self.db_url)
+        self.__db_url = f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+        self.__engine = create_engine(self.__db_url)
+        self.__dir_clear_csvs = '.\\clear_data\\'
 
     def upload_df_to_sql(self, df: DataFrame, table_name: str):
         try:
             df.to_sql(
                 table_name,
-                self.engine,
+                self.__engine,
                 if_exists='append',
                 index=False,
                 method='multi'
@@ -30,9 +32,9 @@ class DbUploader:
 
     def clear_data_in_tables(self):
         metadata = MetaData()
-        metadata.reflect(bind=self.engine)
+        metadata.reflect(bind=self.__engine)
 
-        with self.engine.connect() as connection:
+        with self.__engine.connect() as connection:
             # Отключаем проверку внешних ключей
             connection.execute(text('SET session_replication_role = replica;'))
             # TRUNCATE для каждой таблицы
@@ -43,22 +45,13 @@ class DbUploader:
             # Включаем проверку внешних ключей обратно
             connection.execute(text('SET session_replication_role = default;'))
 
+    def save_data_in_dir(self, df: DataFrame, table_name: str):
+        if not os.path.exists(self.__dir_clear_csvs):
+            os.mkdir(self.__dir_clear_csvs)
+        df.to_csv(f'{self.__dir_clear_csvs + table_name}.csv', index=False, encoding='utf-8')
 
-sql_uploader = DbUploader()
-sql_uploader.clear_data_in_tables()
 
-dfs = ClearDataFrames()
-dfs.clear_data()
 
-sql_uploader.upload_df_to_sql(dfs.product_category_name_translation, 'product_category_name_translation')
-sql_uploader.upload_df_to_sql(dfs.products, 'products')
-sql_uploader.upload_df_to_sql(dfs.customers, 'customers')
-sql_uploader.upload_df_to_sql(dfs.orders, 'orders')
-sql_uploader.upload_df_to_sql(dfs.order_reviews, 'order_reviews')
-sql_uploader.upload_df_to_sql(dfs.order_payments, 'order_payments')
-sql_uploader.upload_df_to_sql(dfs.sellers, 'sellers')
-sql_uploader.upload_df_to_sql(dfs.geolocation, 'geolocation')
-sql_uploader.upload_df_to_sql(dfs.orders_items, 'orders_items')
 
 
 

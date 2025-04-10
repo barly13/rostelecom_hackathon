@@ -1,3 +1,6 @@
+import os
+
+import numpy as np
 import pandas as pd
 
 
@@ -7,18 +10,18 @@ class ClearDataFrames:
         self.geolocation = pd.read_csv('./data/hackathon/geolocation.csv')
         self.order_payments = pd.read_csv('./data/hackathon/order_payments.csv')
         self.order_reviews = pd.read_csv('./data/hackathon/order_reviews.csv')
-        self.orders = pd.read_csv('./data/hackathon//orders.csv')
+        self.orders = pd.read_csv('./data/hackathon/orders.csv')
         self.orders_items = pd.read_csv('./data/hackathon/orders_items.csv')
-        self.product_category_name_translation = pd.read_csv('./data/hackathon//product_category_name_translation.csv')
+        self.product_category_name_translation = pd.read_csv('./data/hackathon/product_category_name_translation.csv')
         self.products = pd.read_csv('./data/hackathon/products.csv')
         self.sellers = pd.read_csv('./data/hackathon/sellers.csv')
 
     def clear_data(self):
         self.__clear_products()
         self.__clear_reviews()
-        self.__clear_payments()
         self.__clear_orders()
         self.__clear_orders_items()
+        self.__clear_payments()
         self.__clear_geolocation()
         self.__clear_product_category_name_translation()
         self.__clear_sellers()
@@ -40,6 +43,9 @@ class ClearDataFrames:
         self.order_payments.drop(columns=['Unnamed: 0'], inplace=True)
         self.order_payments.drop_duplicates(inplace=True)
 
+        indices_to_drop = self.order_payments[~self.order_payments['order_id'].isin(self.orders['order_id'])].index
+        self.order_payments.drop(indices_to_drop, inplace=True)
+
     def __clear_geolocation(self):
         used_zip_codes = pd.concat([
             self.sellers['seller_zip_code_prefix'],
@@ -52,11 +58,60 @@ class ClearDataFrames:
         self.geolocation.drop_duplicates(inplace=True)
         self.geolocation.drop(columns=['Unnamed: 0'], inplace=True)
 
+        def calc_most_state(group):
+            res_group = pd.Series({
+                'most_state': group['geolocation_state'].value_counts().index[0],
+            })
+            return res_group
+
+        geolocation_states = (self.geolocation.groupby('geolocation_zip_code_prefix')[['geolocation_state']]
+                              .apply(calc_most_state).reset_index())
+        self.geolocation = pd.merge(self.geolocation, geolocation_states, on='geolocation_zip_code_prefix', how='left')
+        self.geolocation['geolocation_state'] = (self.geolocation['most_state']
+                                                 .combine_first(self.geolocation['geolocation_state']))
+        self.geolocation.drop(columns=['most_state'], inplace=True)
+        q_percent = 0.25
+
+        def find_outliers(group):
+            if len(group) >= 2:
+                # latitude
+                group_unique = group.drop_duplicates(subset=['geolocation_lat', 'geolocation_lng'])
+                lats = group['geolocation_lat']
+                Q1 = np.quantile(lats, q_percent)
+                Q3 = np.quantile(lats, 1 - q_percent)
+                IQR = Q3 - Q1
+                lower_bound = Q1 - 1.5 * IQR
+                upper_bound = Q3 + 1.5 * IQR
+                group = group[
+                    (group['geolocation_lat'] >= lower_bound) &
+                    (group['geolocation_lat'] <= upper_bound)
+                    ]
+
+                # longitude
+                lngs = group['geolocation_lng']
+                Q1 = np.quantile(lngs, q_percent)
+                Q3 = np.quantile(lngs, 1 - q_percent)
+                IQR = Q3 - Q1
+                lower_bound = Q1 - 1.5 * IQR
+                upper_bound = Q3 + 1.5 * IQR
+                group = group[
+                    (group['geolocation_lng'] >= lower_bound) &
+                    (group['geolocation_lng'] <= upper_bound)
+                    ]
+                return group
+            return group
+
+        # self.geolocation = self.geolocation.groupby('geolocation_state').apply(find_outliers).reset_index(drop=True)
+        self.geolocation = self.geolocation.groupby('geolocation_zip_code_prefix').apply(find_outliers).reset_index(drop=True)
+
     def __clear_orders(self):
         delivered = self.orders[self.orders['order_status'] == 'delivered']
         drop_i = delivered[delivered.isna().any(axis=1)].index  # delivered orders with NaN timestamps
         self.orders.drop(index=drop_i, inplace=True)
         self.orders.drop_duplicates(inplace=True)
+
+        # indices_to_drop = self.orders[~self.orders['order_id'].isin(self.orders_items['order_id'])].index
+        # self.orders.drop(indices_to_drop, inplace=True)
 
     def __clear_orders_items(self):
         try:
@@ -64,10 +119,9 @@ class ClearDataFrames:
         except Exception:
             pass
 
-        indices_to_drop = self.orders_items[~self.orders_items['order_id'].isin(self.orders['order_id'])].index
-        self.orders_items.drop(indices_to_drop, inplace=True)
+        self.orders_items.drop_duplicates(inplace=True)
 
-        indices_to_drop = self.orders_items[~self.orders_items['product_id'].isin(self.products['product_id'])].index
+        indices_to_drop = self.orders_items[~self.orders_items['order_id'].isin(self.orders['order_id'])].index
         self.orders_items.drop(indices_to_drop, inplace=True)
 
         self.orders_items.drop(columns=['Unnamed: 0'], inplace=True)
